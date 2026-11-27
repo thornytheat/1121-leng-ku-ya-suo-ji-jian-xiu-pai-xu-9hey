@@ -11,6 +11,10 @@ from . import duty_reference, maintenance_slots, persistence_filter, robust_alar
 DEFAULT_CAPACITY = 4
 BASELINE_END = 500
 HANDOFF = 590
+SHIFT_START = 600
+SHIFT_END = 735
+CURRENT_THRESHOLD = 0.8
+THRESHOLD_CANDIDATES = (.35, .5, .65, .8, .95)
 
 
 def read_fixture():
@@ -73,12 +77,38 @@ def run(capacity: int | None = None) -> dict:
     meters = shift_meter.evaluate(inputs['meter'], cutoff=HANDOFF)
     reference = duty_reference.evaluate(inputs['history'], cutoff=BASELINE_END)
     candidates = [row for row in meters['records'] if row['status'] == 'accepted']
-    alarm = robust_alarm.evaluate(candidates, references=reference['records'])
-    consecutive = persistence_filter.evaluate([
-        dict(point, duty=duty_period(point['minute'])) for point in alarm['records']
-    ])
-    request_rows = derive_requests(inputs['work'], alarm['records'], consecutive['records'])
-    queue = maintenance_slots.evaluate(request_rows, capacity=capacity if capacity is not None else DEFAULT_CAPACITY)
+    posts = capacity if capacity is not None else DEFAULT_CAPACITY
+
+    def dispatch(threshold):
+        alarm = robust_alarm.evaluate(candidates, references=reference['records'], threshold=threshold)
+        consecutive = persistence_filter.evaluate([
+            dict(point, duty=duty_period(point['minute'])) for point in alarm['records']
+        ])
+        requests = derive_requests(inputs['work'], alarm['records'], consecutive['records'])
+        queue = maintenance_slots.evaluate(requests, capacity=posts, start=SHIFT_START, end=SHIFT_END)
+        return alarm, consecutive, requests, queue
+
+    alarm, consecutive, request_rows, queue = dispatch(CURRENT_THRESHOLD)
+    # 本班最后有机会停机的已排检工单即急修，备选阈值不得挤掉。
+    urgent = {
+        row['unit'] for row in queue['records']
+        if row['state'] == '已排检' and row['allowed_end'] <= SHIFT_END
+    }
+    trials = {}
+    for cut in THRESHOLD_CANDIDATES:
+        if cut == CURRENT_THRESHOLD:
+            continue
+        trial = dispatch(cut)
+        scheduled = {row['unit'] for row in trial[3]['records'] if row['state'] == '已排检'}
+        trials[cut] = trial, sorted(urgent - scheduled)
+    displaced = {cut: lost for cut, (_, lost) in trials.items()} | {CURRENT_THRESHOLD: []}
+    selection = shift_review.select_threshold(
+        inputs['closed'], as_of=HANDOFF, old_threshold=CURRENT_THRESHOLD,
+        displaced_urgent=displaced, candidates=THRESHOLD_CANDIDATES,
+    )
+    chosen = selection['selected_threshold']
+    if chosen != CURRENT_THRESHOLD:
+        alarm, consecutive, request_rows, queue = trials[chosen][0]
     review = shift_review.evaluate(inputs['closed'], as_of=HANDOFF)
     actions = Counter(row['state'] for row in queue['records'])
     faults = review['records'][0]
@@ -88,7 +118,7 @@ def run(capacity: int | None = None) -> dict:
         ('稳健异常', '按排气压力和轴承振动分解偏离，超训练域留待查表', alarm),
         ('持续告警', '同一巡查窗口连续异常才能生成检修候选', consecutive),
         ('停机排程', f"本班落实 {actions['已排检']} 张工单", queue),
-        ('班次复盘', f"对账 {faults['verified']} 个已验修结果", review),
+        ('班次复盘', f"对账 {faults['verified']} 个已验修结果，本班告警阈值 {chosen}", review),
     ]
     return {
         'reconciliation': {
@@ -97,14 +127,16 @@ def run(capacity: int | None = None) -> dict:
             'threshold_replay': robust_alarm.compare_operating_points(alarm['records']),
             'alarm_episodes': persistence_filter.extract_episodes([dict(point,duty=duty_period(point['minute'])) for point in alarm['records']]),
             'work_order_proof': maintenance_slots.reconcile_schedule(queue['records']),
-            'alternate_staffing': maintenance_slots.simulate_staffing(request_rows, capacity=capacity if capacity is not None else DEFAULT_CAPACITY),
+            'alternate_staffing': maintenance_slots.simulate_staffing(request_rows, capacity=posts),
             'inspection_counterfactual': shift_review.inspection_counterfactual(inputs['closed'], as_of=HANDOFF),
+            'threshold_selection': {**selection, 'urgent_units': sorted(urgent)},
         },
         'metrics': {
             '在册机组': len(queue['records']),
             '确认告警': sum(row['decision'] == 'CONFIRMED' for row in consecutive['records']),
             '本班停机': actions['已排检'],
             '候补工单': actions['候补'],
+            '告警阈值': chosen,
         },
         'columns': {'unit': '机组', 'rack': '冷区', 'risk': '峰值评分', 'records': '连续次数',
                     'crew': '班组', 'slot': '停机分钟', 'status': '状态', 'reason': '处置依据'},

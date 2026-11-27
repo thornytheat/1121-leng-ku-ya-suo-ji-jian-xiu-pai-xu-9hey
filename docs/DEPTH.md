@@ -11,7 +11,7 @@
 | M3 | 稳健异常 | AlarmMeasure处理证据 | `src/chillwatch/robust_alarm/contracts.py` `src/chillwatch/robust_alarm/algorithm.py` `src/chillwatch/robust_alarm/service.py` `src/chillwatch/robust_alarm/threshold_replay.py` | `tests/test_robust_alarm.py` `tests/test_threshold_replay.py` |
 | M4 | 持续告警 | TimedAlarm处理证据 | `src/chillwatch/persistence_filter/contracts.py` `src/chillwatch/persistence_filter/algorithm.py` `src/chillwatch/persistence_filter/service.py` `src/chillwatch/persistence_filter/episode_ledger.py` | `tests/test_persistence_filter.py` `tests/test_episode_ledger.py` |
 | M5 | 停机排程 | WorkCandidate处理证据 | `src/chillwatch/maintenance_slots/contracts.py` `src/chillwatch/maintenance_slots/algorithm.py` `src/chillwatch/maintenance_slots/service.py` `src/chillwatch/maintenance_slots/work_order_proof.py` `src/chillwatch/maintenance_slots/coverage_plan.py` | `tests/test_maintenance_slots.py` `tests/test_work_order_proof.py` `tests/test_coverage_plan.py` |
-| M6 | 班次复盘 | ClosedIncident处理证据 | `src/chillwatch/shift_review/contracts.py` `src/chillwatch/shift_review/algorithm.py` `src/chillwatch/shift_review/service.py` `src/chillwatch/shift_review/alarm_counterfactual.py` | `tests/test_shift_review.py` `tests/test_alarm_counterfactual.py` |
+| M6 | 班次复盘 | ClosedIncident处理证据 | `src/chillwatch/shift_review/contracts.py` `src/chillwatch/shift_review/algorithm.py` `src/chillwatch/shift_review/service.py` `src/chillwatch/shift_review/alarm_counterfactual.py` `src/chillwatch/shift_review/threshold_policy.py` | `tests/test_shift_review.py` `tests/test_alarm_counterfactual.py` `tests/test_threshold_policy.py` |
 
 ## 边界登记
 
@@ -26,3 +26,5 @@
 | TRAP-44 | 训练域外读数隔离为人工复查 | `src/chillwatch/robust_alarm/algorithm.py` | `tests/test_robust_alarm.py::test_out_of_domain_reading_is_not_automated_high_confidence` |
 | TRAP-53 | 与陌生设备拼批不改已知设备得分 | `src/chillwatch/robust_alarm/algorithm.py` | `tests/test_robust_alarm.py::test_single_point_stays_fixed_in_python_batches` |
 | TRAP-54 | 历史或超参变化会改变基线版本号 | `src/chillwatch/duty_reference/algorithm.py` | `tests/test_duty_reference.py::test_training_key_carries_upstream_digest_and_configuration` |
+| TRAP-63 | 备选阈值挤掉旧阈值下已排上的急修，该档不采用 | `src/chillwatch/shift_review/threshold_policy.py` | `tests/test_threshold_policy.py::test_lower_tier_crowding_out_urgent_repair_is_vetoed` |
+| TRAP-64 | 没有已验修样本时沿用旧阈值，迟到验修留到下一班 | `src/chillwatch/shift_review/threshold_policy.py` | `tests/test_threshold_policy.py::test_late_samples_wait_for_the_next_shift` |
